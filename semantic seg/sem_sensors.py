@@ -9,8 +9,7 @@ class SensorHandler:
         try:
             image.convert(carla.ColorConverter.CityScapesPalette)
             arr = np.frombuffer(image.raw_data, dtype=np.uint8)
-            arr = arr.reshape((image.height, image.width, 4))[:, :, :3]
-            arr = arr[:, :, ::-1]
+            arr = arr.reshape((image.height, image.width, 4))[:, :, :3][:, :, ::-1]
             self.semantic_image = arr.copy()
         except Exception as e:
             print(f"⚠️ Sensor error: {e}")
