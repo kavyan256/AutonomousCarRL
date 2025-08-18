@@ -1,9 +1,8 @@
+# sem_main.py
 import argparse
 import sys
 import signal
 import time
-import cv2
-import numpy as np
 import pygame
 
 from sem_connection import ConnectionManager
@@ -12,7 +11,6 @@ from sem_sensors import SensorHandler
 from sem_control import ControlManager
 from sem_display import DisplayManager
 from sem_cleanup import CleanupManager
-from sem_detect import SemanticDetector
 from sem_record import DatasetRecorder  # optional for recording
 
 def main():
@@ -31,10 +29,10 @@ def main():
         return
     print("[INFO] Connected to CARLA")
 
-    spawner = SpawnManager(conn.world)
+    spawner = SpawnManager(conn.world, conn.client, max_npc_speed=30.0)
     sensors = SensorHandler()
     controls = ControlManager()
-    display = DisplayManager()
+    display = DisplayManager(conn.world, spawner.vehicle, sensors)
 
     def cleanup_all():
         cleaner = CleanupManager(
@@ -60,10 +58,7 @@ def main():
         print("✅ Vehicle and NPCs spawned")
 
     spawner.semantic_camera = spawner.setup_semantic_camera(spawner.vehicle, sensors.on_semantic_image)
-    semantic_cam = spawner.semantic_camera  # keep reference
     print("📷 Semantic camera ready")
-
-    detector = SemanticDetector(conn.world, spawner.vehicle, semantic_cam)
 
     recorder = DatasetRecorder(folder="sem_dataset", img_height=600, img_width=800) \
                    if args.record else None
@@ -79,23 +74,8 @@ def main():
         # Spectator update
         display.update_spectator(spawner.vehicle, conn.spectator)
 
-        # Semantic detection
-        semantic_img = sensors.semantic_image
-        bbox_img = None
-        if semantic_img is not None:
-            bbox_img, counts = detector.detect_and_draw(semantic_img.copy())
-
-            # Record if enabled
-            if recorder:
-                vel = spawner.vehicle.get_velocity()
-                speed = np.linalg.norm([vel.x, vel.y, vel.z])
-                ctrl = spawner.vehicle.get_control()
-                rec_img = cv2.resize(semantic_img, (800, 600)) \
-                            if semantic_img.shape[0:2] != (600, 800) else semantic_img
-                recorder.record(rec_img, speed, ctrl.steer, ctrl.throttle, ctrl.brake)
-
-        # Draw
-        running = display.draw(semantic_img, bbox_img)
+        # Draw semantic + bounding boxes (detection handled internally)
+        running, bbox_counts = display.draw_with_detection(recorder)
 
     if recorder:
         recorder.close()
@@ -104,15 +84,14 @@ def main():
     cleaner = CleanupManager(
         conn.world,
         vehicle=spawner.vehicle,
-        semantic_camera=semantic_cam,
+        semantic_camera=spawner.semantic_camera,
         vehicles=spawner.vehicles,
         sensors=[sensors.semantic_image],
         original_settings=conn.original_settings
     )
     cleaner.cleanup()
     time.sleep(1)
-
-pygame.quit()
+    pygame.quit()
 
 
 if __name__ == "__main__":

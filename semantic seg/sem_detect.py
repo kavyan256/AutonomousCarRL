@@ -1,3 +1,4 @@
+# sem_detect.py
 import cv2
 import numpy as np
 from sem_awareness import SemanticAwareness, rotation_to_matrix
