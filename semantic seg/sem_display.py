@@ -60,7 +60,7 @@ class DisplayManager:
     def draw_with_detection(self, recorder=None):
         """
         Process semantic image, draw bounding boxes in OpenCV window.
-        Tracks vehicles across frames with SORT.
+        Tracks vehicles across frames with SORT and shows heading vectors.
         """
         semantic_image = self.semantic_sensor.semantic_image
         bbox_image = None
@@ -74,22 +74,36 @@ class DisplayManager:
                 contours,_ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
                 for cnt in contours:
                     x,y,w,h = cv2.boundingRect(cnt)
-                    if w < 8 or h < 8: continue
+                    if w < 8 or h < 8: 
+                        continue
                     detections.append([x, y, x+w, y+h, cls_name])
 
             # Update tracker
             tracked_objects = self.tracker.update(detections)
 
-            # Draw tracked boxes
+            # Draw tracked boxes with heading arrows
             bbox_image = semantic_image.copy()
             for obj in tracked_objects:
-                x1, y1, x2, y2, obj_id, cls_name = obj
+                x1, y1, x2, y2, obj_id, cls_name, heading = obj
+
+                # Choose color per class
                 color = (0,255,0) if cls_name=="Car" else \
                         (255,0,0) if cls_name=="Truck" else \
                         (0,255,255) if cls_name=="Bus" else (255,0,255)
+
+                # Draw bounding box
                 cv2.rectangle(bbox_image, (int(x1), int(y1)), (int(x2), int(y2)), color, 2)
                 cv2.putText(bbox_image, f"{cls_name} id:{obj_id}", (int(x1), int(y1)-5),
                             cv2.FONT_HERSHEY_SIMPLEX, 0.45, color, 1)
+
+                # Draw heading arrow
+                cx = int((x1+x2)/2)
+                cy = int((y1+y2)/2)
+                dx, dy = heading
+                norm = np.linalg.norm([dx, dy])
+                if norm > 0:
+                    dx, dy = dx/norm*20, dy/norm*20  # normalize & scale for visibility
+                    cv2.arrowedLine(bbox_image, (cx, cy), (int(cx+dx), int(cy+dy)), (255,255,255), 2, tipLength=0.3)
 
             # Show bounding box feed in OpenCV window
             cv2.imshow("Bounding Boxes", cv2.cvtColor(bbox_image, cv2.COLOR_RGB2BGR))

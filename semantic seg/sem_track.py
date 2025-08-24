@@ -3,11 +3,11 @@ import numpy as np
 from filterpy.kalman import KalmanFilter
 
 class Track:
-    free_ids = []   # Pool of reusable IDs
-    next_id = 0     # Next new ID if pool is empty
+    free_ids = []
+    next_id = 0
 
     def __init__(self, bbox, cls_name):
-        # Assign ID: smallest available free ID or next new ID
+        # Assign ID
         if Track.free_ids:
             self.id = min(Track.free_ids)
             Track.free_ids.remove(self.id)
@@ -15,7 +15,7 @@ class Track:
             self.id = Track.next_id
             Track.next_id += 1
 
-        # Kalman filter initialization
+        # Initialize Kalman filter
         self.kf = KalmanFilter(dim_x=7, dim_z=4)
         dt = 1.0
         self.kf.F = np.array([[1,0,0,0,dt,0,0],
@@ -45,6 +45,10 @@ class Track:
         self.time_since_update = 0
         self.hit_streak = 0
 
+        # Heading vector
+        self.prev_center = np.array([cx, cy], dtype=float)
+        self.heading_vector = np.array([0.0, 0.0], dtype=float)
+
     def predict(self):
         self.kf.predict()
         self.time_since_update += 1
@@ -57,6 +61,12 @@ class Track:
         w = x2-x1
         h = y2-y1
         self.kf.update(np.array([cx, cy, w, h]))
+
+        # Compute heading vector
+        new_center = np.array([cx, cy], dtype=float)
+        self.heading_vector = new_center - self.prev_center
+        self.prev_center = new_center
+
         self.time_since_update = 0
         self.hit_streak += 1
 
@@ -84,7 +94,8 @@ class Sort:
         w = max(0., xx2 - xx1)
         h = max(0., yy2 - yy1)
         wh = w*h
-        o = wh / ((bb_test[2]-bb_test[0])*(bb_test[3]-bb_test[1]) + (bb_gt[2]-bb_gt[0])*(bb_gt[3]-bb_gt[1]) - wh + 1e-6)
+        o = wh / ((bb_test[2]-bb_test[0])*(bb_test[3]-bb_test[1]) +
+                  (bb_gt[2]-bb_gt[0])*(bb_gt[3]-bb_gt[1]) - wh + 1e-6)
         return o
 
     def update(self, dets):
@@ -94,7 +105,6 @@ class Sort:
         for t in self.tracks:
             t.predict()
 
-        # Associate detections to tracks using IOU
         unmatched_dets = []
         unmatched_tracks = list(range(len(self.tracks)))
         matches = []
@@ -120,14 +130,20 @@ class Sort:
         # Update matched tracks
         for d, t in matches:
             self.tracks[t].update(dets[d][:4])
-            updated_tracks.append([*self.tracks[t].get_state(), self.tracks[t].id, self.tracks[t].cls_name])
+            updated_tracks.append([*self.tracks[t].get_state(),
+                                   self.tracks[t].id,
+                                   self.tracks[t].cls_name,
+                                   self.tracks[t].heading_vector])
 
-        # Create new tracks for unmatched detections
+        # Create new tracks
         for idx in unmatched_dets:
             det = dets[idx]
             trk = Track(det[:4], det[4])
             self.tracks.append(trk)
-            updated_tracks.append([*trk.get_state(), trk.id, trk.cls_name])
+            updated_tracks.append([*trk.get_state(),
+                                   trk.id,
+                                   trk.cls_name,
+                                   trk.heading_vector])
 
         # Remove old tracks and recycle IDs
         alive_tracks = []
@@ -135,7 +151,7 @@ class Sort:
             if t.time_since_update <= self.max_age:
                 alive_tracks.append(t)
             else:
-                Track.free_ids.append(t.id)  # recycle ID
+                Track.free_ids.append(t.id)
         self.tracks = alive_tracks
 
         return updated_tracks
