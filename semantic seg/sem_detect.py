@@ -1,7 +1,6 @@
 # sem_detect.py
 import cv2
 import numpy as np
-from sem_awareness import SemanticAwareness, rotation_to_matrix
 from scipy.spatial import cKDTree
 import carla
 import math
@@ -14,7 +13,6 @@ class SemanticDetector:
         self.img_w, self.img_h = image_size
         self.fov = fov
         self.match_threshold_px = match_threshold_px
-        self.awareness = SemanticAwareness(world, ego_vehicle)
 
         fov_rad = math.radians(fov)
         self.fx = self.img_w / (2 * math.tan(fov_rad / 2))
@@ -33,7 +31,7 @@ class SemanticDetector:
         wp = np.array([world_point.x, world_point.y, world_point.z], dtype=float)
         cam_loc = cam_tf.location
         cam_pos = np.array([cam_loc.x, cam_loc.y, cam_loc.z], dtype=float)
-        R = rotation_to_matrix(cam_tf.rotation).T
+        R = np.eye(3)
         t = -R @ cam_pos
         return R @ wp + t
 
@@ -73,7 +71,6 @@ class SemanticDetector:
                 actor_list.append(actor)
 
         kdtree = cKDTree(np.array(actor_proj_points)) if actor_proj_points else None
-        matches = {}
 
         for cls_name, color in self.classes.items():
             mask = cv2.inRange(frame, color, color)
@@ -92,24 +89,17 @@ class SemanticDetector:
                             (0,255,255) if cls_name=="Bus" else (255,0,255)
 
                 matched_actor=None
-                match_dist=None
                 if kdtree:
                     dists, idxs = kdtree.query([(cx,cy)], k=3, distance_upper_bound=self.match_threshold_px)
                     dists, idxs = dists[0], idxs[0]
                     for dist, idx in zip(dists, idxs):
                         if idx>=len(actor_list) or np.isinf(dist): continue
                         matched_actor=actor_list[idx]
-                        match_dist=dist
                         break
 
-                info={}
                 if matched_actor:
-                    info=self.awareness.analyze_vehicle(matched_actor)
-                    info["bbox_center"]=(cx,cy)
-                    info["detection_class"]=cls_name
-                    info["match_dist_px"]=match_dist
                     cv2.rectangle(frame_out,(x,y),(x+w,y+h),box_color,2)
-                    txt1=f"{cls_name} id:{matched_actor.id} d:{info['distance']:.1f}m v:{info['veh_speed']*3.6:.0f}km/h"
+                    txt1=f"{cls_name} id:{matched_actor.id}"
                     cv2.putText(frame_out,txt1,(x,y-5),cv2.FONT_HERSHEY_SIMPLEX,0.45,box_color,1)
                 else:
                     cv2.rectangle(frame_out,(x,y),(x+w,y+h),box_color,1)

@@ -3,6 +3,7 @@ import pygame
 import cv2
 import numpy as np
 from sem_detect import SemanticDetector
+from sem_track import Sort
 import carla
 
 class DisplayManager:
@@ -20,6 +21,9 @@ class DisplayManager:
 
         # Initialize SemanticDetector
         self.detector = SemanticDetector(world, vehicle, None, image_size=img_size)
+
+        # Initialize SORT tracker
+        self.tracker = Sort(max_age=5, min_hits=1, iou_threshold=0.3)
 
         # OpenCV window for bounding box visualization
         cv2.namedWindow("Bounding Boxes", cv2.WINDOW_NORMAL)
@@ -56,17 +60,39 @@ class DisplayManager:
     def draw_with_detection(self, recorder=None):
         """
         Process semantic image, draw bounding boxes in OpenCV window.
-        Raw feed is shown in Pygame window.
+        Tracks vehicles across frames with SORT.
         """
         semantic_image = self.semantic_sensor.semantic_image
-        bbox_image, counts = None, {}
+        bbox_image = None
+        detections = []
 
         if semantic_image is not None:
-            # Run detection
-            bbox_image, counts = self.detector.detect_and_draw(semantic_image.copy())
+            # Prepare detections for SORT
+            for cls_name, color in self.detector.classes.items():
+                mask = cv2.inRange(semantic_image, color, color)
+                mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, np.ones((3,3),np.uint8))
+                contours,_ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+                for cnt in contours:
+                    x,y,w,h = cv2.boundingRect(cnt)
+                    if w < 8 or h < 8: continue
+                    detections.append([x, y, x+w, y+h, cls_name])
 
-            # Show bbox feed in OpenCV window
-            cv2.imshow("Bounding Boxes", bbox_image)
+            # Update tracker
+            tracked_objects = self.tracker.update(detections)
+
+            # Draw tracked boxes
+            bbox_image = semantic_image.copy()
+            for obj in tracked_objects:
+                x1, y1, x2, y2, obj_id, cls_name = obj
+                color = (0,255,0) if cls_name=="Car" else \
+                        (255,0,0) if cls_name=="Truck" else \
+                        (0,255,255) if cls_name=="Bus" else (255,0,255)
+                cv2.rectangle(bbox_image, (int(x1), int(y1)), (int(x2), int(y2)), color, 2)
+                cv2.putText(bbox_image, f"{cls_name} id:{obj_id}", (int(x1), int(y1)-5),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.45, color, 1)
+
+            # Show bounding box feed in OpenCV window
+            cv2.imshow("Bounding Boxes", cv2.cvtColor(bbox_image, cv2.COLOR_RGB2BGR))
             cv2.waitKey(1)
 
             # Record if enabled
@@ -80,7 +106,7 @@ class DisplayManager:
 
         # Show semantic feed in Pygame
         running = self.draw_pygame_feed(semantic_image)
-        return running, counts
+        return running, tracked_objects if semantic_image is not None else []
 
     def close(self):
         """
